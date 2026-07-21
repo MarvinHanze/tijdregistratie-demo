@@ -20,6 +20,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($email === ADMIN_EMAIL && password_verify($pass, ADMIN_PASS_HASH)) {
         session_regenerate_id(true);
+        setupDatabase();
+        $account = getEmployeeByEmail(ADMIN_EMAIL);
+
+        if ($account && !empty($account['mfa_enabled'])) {
+            // MFA vereist: nog niet volledig inloggen, eerst naar de TOTP-stap.
+            $_SESSION['mfa_pending_email'] = $email;
+            header('Location: ' . BASE . '/mfa.php');
+            exit;
+        }
+
         $_SESSION['authenticated'] = true;
         $_SESSION['user'] = $email;
         seedData();
@@ -36,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Inloggen - Tijdregistratie</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="<?= BASE ?>/assets/css/components.css">
 </head>
 <body class="min-h-screen bg-slate-50 flex items-center justify-center p-4">
     <div class="w-full max-w-md">

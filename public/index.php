@@ -3,475 +3,365 @@ declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 requireAuth();
 setupDatabase();
+require_once __DIR__ . '/includes/layout.php';
 
 $db = getDB();
 
-// --- Handle POST actions ---
+// --- Server-side klok in/uit: timestamps komen ALTIJD van de server (NOW()/date()),
+//     nooit uit client-input. Dit is bewust losgekoppeld van de handmatige-correctie
+//     invoer op de Urenregistratie-pagina. ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCSRF();
     $action = $_POST['action'] ?? '';
+    $employeeId = (int)($_POST['employee_id'] ?? 0);
 
-    if ($action === 'add' || $action === 'edit') {
-        $employee = trim($_POST['employee_name'] ?? '');
+    if ($action === 'server_clock_in' && $employeeId > 0) {
         $project = trim($_POST['project'] ?? '');
-        $clockIn = $_POST['clock_in'] ?? '';
-        $clockOut = !empty($_POST['clock_out']) ? $_POST['clock_out'] : null;
         $notes = trim($_POST['notes'] ?? '');
-
-        if ($employee !== '' && $project !== '' && $clockIn !== '') {
-            $duration = 0;
-            if ($clockOut) {
-                $dIn = new DateTime($clockIn);
-                $dOut = new DateTime($clockOut);
-                $duration = max(0, (int)$dOut->diff($dIn)->i + (int)$dOut->diff($dIn)->h * 60 + (int)$dOut->diff($dIn)->d * 1440);
-            }
-
-            if ($action === 'add') {
-                $stmt = $db->prepare("INSERT INTO tijd_entries (employee_name, project, clock_in, clock_out, duration_minutes, notes) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$employee, $project, $clockIn, $clockOut, $duration, $notes]);
-            } else {
-                $id = (int)($_POST['id'] ?? 0);
-                if ($id > 0) {
-                    $stmt = $db->prepare("UPDATE tijd_entries SET employee_name=?, project=?, clock_in=?, clock_out=?, duration_minutes=?, notes=? WHERE id=?");
-                    $stmt->execute([$employee, $project, $clockIn, $clockOut, $duration, $notes, $id]);
-                }
-            }
+        $employee = getEmployeeById($employeeId);
+        if ($employee && $project !== '') {
+            $stmt = $db->prepare("INSERT INTO tijd_entries (employee_id, employee_name, project, clock_in, clock_out, duration_minutes, notes) VALUES (?, ?, ?, ?, NULL, 0, ?)");
+            $stmt->execute([$employeeId, $employee['name'], $project, date('Y-m-d H:i:s'), $notes]);
         }
         header('Location: ' . BASE . '/index.php');
         exit;
     }
 
-    if ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id > 0) {
-            $stmt = $db->prepare("DELETE FROM tijd_entries WHERE id = ?");
-            $stmt->execute([$id]);
-        }
-        header('Location: ' . BASE . '/index.php');
-        exit;
-    }
-
-    if ($action === 'toggle') {
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id > 0) {
-            $row = $db->prepare("SELECT clock_in, clock_out FROM tijd_entries WHERE id = ?");
-            $row->execute([$id]);
-            $entry = $row->fetch();
-            if ($entry) {
-                if ($entry['clock_out'] === null) {
-                    $now = new DateTime();
-                    $clockIn = new DateTime($entry['clock_in']);
-                    $duration = (int)$now->diff($clockIn)->i + (int)$now->diff($clockIn)->h * 60 + (int)$now->diff($clockIn)->d * 1440;
-                    $stmt = $db->prepare("UPDATE tijd_entries SET clock_out=?, duration_minutes=? WHERE id=?");
-                    $stmt->execute([$now->format('Y-m-d H:i:s'), $duration, $id]);
-                } else {
-                    $stmt = $db->prepare("UPDATE tijd_entries SET clock_out=NULL, duration_minutes=0 WHERE id=?");
-                    $stmt->execute([$id]);
-                }
-            }
+    if ($action === 'server_clock_out' && $employeeId > 0) {
+        $stmt = $db->prepare("SELECT id, clock_in FROM tijd_entries WHERE employee_id = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1");
+        $stmt->execute([$employeeId]);
+        $open = $stmt->fetch();
+        if ($open) {
+            $now = new DateTime();
+            $clockIn = new DateTime($open['clock_in']);
+            $diff = $now->diff($clockIn);
+            $duration = (int)$diff->i + (int)$diff->h * 60 + (int)$diff->days * 1440;
+            $upd = $db->prepare("UPDATE tijd_entries SET clock_out = ?, duration_minutes = ? WHERE id = ?");
+            $upd->execute([$now->format('Y-m-d H:i:s'), $duration, $open['id']]);
         }
         header('Location: ' . BASE . '/index.php');
         exit;
     }
 }
 
-// --- Fetch data ---
-$search = trim($_GET['search'] ?? '');
-$filterEmployee = $_GET['employee'] ?? '';
-$filterProject = $_GET['project'] ?? '';
+$account = currentAccountEmployee();
+$viewedId = viewedEmployeeId();
+$focusEmployeeId = $viewedId ?? (int)($account['id'] ?? 0);
+$focusEmployee = $focusEmployeeId ? getEmployeeById($focusEmployeeId) : null;
+$isTeamView = ($viewedId === null);
+$regels = getCaoRegels();
 
-$where = [];
-$params = [];
-
-if ($search !== '') {
-    $where[] = "(employee_name LIKE ? OR project LIKE ? OR notes LIKE ?)";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-}
-if ($filterEmployee !== '') {
-    $where[] = "employee_name = ?";
-    $params[] = $filterEmployee;
-}
-if ($filterProject !== '') {
-    $where[] = "project = ?";
-    $params[] = $filterProject;
-}
-
-$whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-$sql = "SELECT * FROM tijd_entries {$whereSql} ORDER BY clock_in DESC";
-$stmt = $db->prepare($sql);
-$stmt->execute($params);
-$entries = $stmt->fetchAll();
-
-// Stats
 $today = date('Y-m-d');
 $weekStart = date('Y-m-d', strtotime('monday this week'));
 
-$statToday = $db->prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) = ?");
-$statToday->execute([$today]);
-$statToday = $statToday->fetch();
-$statWeek = $db->prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) >= ?");
-$statWeek->execute([$weekStart]);
-$statWeek = $statWeek->fetch();
-$statActive = $db->query("SELECT COUNT(*) as total FROM tijd_entries WHERE clock_out IS NULL")->fetch();
-$statProjects = $db->query("SELECT COUNT(DISTINCT project) as total FROM tijd_entries")->fetch();
+if ($focusEmployee) {
+    $stmtToday = $db->prepare("SELECT COALESCE(SUM(duration_minutes),0) t FROM tijd_entries WHERE employee_id = ? AND DATE(clock_in) = ?");
+    $stmtToday->execute([$focusEmployeeId, $today]);
+    $minutesToday = (int)$stmtToday->fetch()['t'];
 
-$employees = $db->query("SELECT DISTINCT employee_name FROM tijd_entries ORDER BY employee_name")->fetchAll(PDO::FETCH_COLUMN);
-$projects = $db->query("SELECT DISTINCT project FROM tijd_entries ORDER BY project")->fetchAll(PDO::FETCH_COLUMN);
+    $stmtWeek = $db->prepare("SELECT COALESCE(SUM(duration_minutes),0) t FROM tijd_entries WHERE employee_id = ? AND DATE(clock_in) >= ?");
+    $stmtWeek->execute([$focusEmployeeId, $weekStart]);
+    $minutesWeek = (int)$stmtWeek->fetch()['t'];
 
-function formatDuration(int $minutes): string {
-    if ($minutes <= 0) return '-';
-    $h = intdiv($minutes, 60);
-    $m = $minutes % 60;
-    return "{$h}u {$m}m";
+    $overtimeMinutes = calculateOvertimeMinutes($minutesWeek, $regels);
+    $normUren = $regels['normuren_per_week'] ?? 40.0;
+
+    $stmtOpen = $db->prepare("SELECT * FROM tijd_entries WHERE employee_id = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1");
+    $stmtOpen->execute([$focusEmployeeId]);
+    $openEntry = $stmtOpen->fetch();
+
+    $stmtRecentProjects = $db->prepare("SELECT project, MAX(clock_in) mx FROM tijd_entries WHERE employee_id = ? GROUP BY project ORDER BY mx DESC LIMIT 5");
+    $stmtRecentProjects->execute([$focusEmployeeId]);
+    $recentProjects = $stmtRecentProjects->fetchAll(PDO::FETCH_COLUMN);
+
+    $stmtTimeline = $db->prepare("SELECT * FROM tijd_entries WHERE employee_id = ? AND DATE(clock_in) >= ? ORDER BY clock_in DESC LIMIT 10");
+    $stmtTimeline->execute([$focusEmployeeId, $weekStart]);
+    $timeline = $stmtTimeline->fetchAll();
+} else {
+    $openEntry = null;
+    $recentProjects = $db->query("SELECT project, MAX(clock_in) mx FROM tijd_entries GROUP BY project ORDER BY mx DESC LIMIT 5")->fetchAll(PDO::FETCH_COLUMN);
 }
 
-function formatDateTime(?string $dt): string {
-    if (!$dt) return '-';
-    return date('d-m-Y H:i', strtotime($dt));
-}
+// Teamweergave (manager, geen medewerker geselecteerd)
+$teamStatToday = $db->prepare("SELECT COALESCE(SUM(duration_minutes),0) t FROM tijd_entries WHERE DATE(clock_in) = ?");
+$teamStatToday->execute([$today]);
+$teamMinutesToday = (int)$teamStatToday->fetch()['t'];
+
+$teamStatWeek = $db->prepare("SELECT COALESCE(SUM(duration_minutes),0) t FROM tijd_entries WHERE DATE(clock_in) >= ?");
+$teamStatWeek->execute([$weekStart]);
+$teamMinutesWeek = (int)$teamStatWeek->fetch()['t'];
+
+$teamActive = (int)$db->query("SELECT COUNT(*) t FROM tijd_entries WHERE clock_out IS NULL")->fetch()['t'];
+
+$statusPerEmployee = $db->query("
+    SELECT emp.id, emp.name, emp.role,
+           (SELECT COUNT(*) FROM tijd_entries e WHERE e.employee_id = emp.id AND e.clock_out IS NULL) AS actief,
+           (SELECT COALESCE(SUM(duration_minutes),0) FROM tijd_entries e WHERE e.employee_id = emp.id AND DATE(e.clock_in) >= '" . $weekStart . "') AS week_minuten
+    FROM tijd_employees emp ORDER BY name
+")->fetchAll();
+
+$layout = layoutStart('Dashboard', 'dashboard');
+$forgotten = $layout['forgotten'];
 ?>
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tijdregistratie Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-slate-50">
 
-<!-- Navbar -->
-<nav class="bg-white shadow-sm border-b border-slate-200">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex items-center justify-between h-16">
-            <div class="flex items-center gap-3">
-                <svg class="w-7 h-7 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <polyline points="12 6 12 12 16 14"/>
-                </svg>
-                <span class="text-xl font-bold text-slate-800">Tijdregistratie</span>
-            </div>
-            <div class="flex items-center gap-4">
-                <span class="text-sm text-slate-500"><?= e($_SESSION['user'] ?? '') ?></span>
-                <a href="<?= BASE ?>/logout.php" class="text-sm text-slate-500 hover:text-red-500 transition">
-                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                        <polyline points="16 17 21 12 16 7"/>
-                        <line x1="21" y1="12" x2="9" y2="12"/>
-                    </svg>
-                    Uitloggen
-                </a>
-            </div>
-        </div>
+<?php if (!empty($forgotten)): ?>
+<div class="hz-card" style="border-left:4px solid var(--hz-danger); margin-bottom:1.25rem;">
+    <strong style="color:var(--hz-danger);">⚠ Vergeten uit te klokken</strong>
+    <p style="color:var(--hz-text-muted); font-size:.88rem; margin:.35rem 0 .5rem;">
+        Deze registraties staan meer dan 12 uur open. Dit is een in-app herinnering (er wordt geen e-mail verstuurd in deze demo).
+    </p>
+    <ul style="font-size:.88rem; padding-left:1.1rem; margin:0;">
+        <?php foreach ($forgotten as $f): ?>
+            <li><?= e($f['emp_display_name'] ?? $f['employee_name']) ?> — <?= e($f['project']) ?> (sinds <?= date('d-m-Y H:i', strtotime($f['clock_in'])) ?>)</li>
+        <?php endforeach; ?>
+    </ul>
+    <a href="<?= BASE ?>/uren.php" class="hz-btn hz-btn--secondary" style="margin-top:.6rem;">Corrigeren op Urenregistratie</a>
+</div>
+<?php endif; ?>
+
+<?php if ($focusEmployee): ?>
+<!-- Persoonlijk dashboard voor de geselecteerde medewerker -->
+<div class="hz-grid hz-grid--3" style="margin-bottom:1.25rem;">
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Gewerkt vandaag</div>
+        <div class="hz-card__value"><?= formatDuration($minutesToday) ?></div>
     </div>
-</nav>
-
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-
-    <!-- Stats -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
-                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-500 uppercase tracking-wide">Vandaag Gewerkt</p>
-                    <p class="text-xl font-bold text-slate-800"><?= formatDuration((int)$statToday['total']) ?></p>
-                </div>
-            </div>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
-                    <svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <rect x="3" y="4" width="18" height="18" rx="2"/>
-                        <line x1="16" y1="2" x2="16" y2="6"/>
-                        <line x1="8" y1="2" x2="8" y2="6"/>
-                        <line x1="3" y1="10" x2="21" y2="10"/>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-500 uppercase tracking-wide">Deze Week</p>
-                    <p class="text-xl font-bold text-slate-800"><?= formatDuration((int)$statWeek['total']) ?></p>
-                </div>
-            </div>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-                    <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-500 uppercase tracking-wide">Actieve Timers</p>
-                    <p class="text-xl font-bold text-slate-800"><?= (int)$statActive['total'] ?></p>
-                </div>
-            </div>
-        </div>
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center">
-                    <svg class="w-5 h-5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-500 uppercase tracking-wide">Totaal Projecten</p>
-                    <p class="text-xl font-bold text-slate-800"><?= (int)$statProjects['total'] ?></p>
-                </div>
-            </div>
-        </div>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Gewerkt deze week</div>
+        <div class="hz-card__value"><?= formatDuration($minutesWeek) ?></div>
     </div>
-
-    <!-- Toolbar -->
-    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
-        <form method="GET" class="flex flex-col sm:flex-row gap-3">
-            <div class="flex-1">
-                <div class="relative">
-                    <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                    </svg>
-                    <input
-                        type="text"
-                        name="search"
-                        value="<?= e($search) ?>"
-                        placeholder="Zoeken..."
-                        class="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
-                    >
-                </div>
-            </div>
-            <select name="employee" class="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                <option value="">Alle medewerkers</option>
-                <?php foreach ($employees as $emp): ?>
-                    <option value="<?= e($emp) ?>" <?= $filterEmployee === $emp ? 'selected' : '' ?>><?= e($emp) ?></option>
-                <?php endforeach; ?>
-            </select>
-            <select name="project" class="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
-                <option value="">Alle projecten</option>
-                <?php foreach ($projects as $proj): ?>
-                    <option value="<?= e($proj) ?>" <?= $filterProject === $proj ? 'selected' : '' ?>><?= e($proj) ?></option>
-                <?php endforeach; ?>
-            </select>
-            <button type="submit" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition">
-                Zoeken
-            </button>
-            <a href="<?= BASE ?>/index.php" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition text-center">
-                Reset
-            </a>
-        </form>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Normuren deze week</div>
+        <div class="hz-card__value"><?= (float)$normUren ?>u</div>
     </div>
-
-    <!-- Add button -->
-    <div class="flex justify-end mb-4">
-        <button onclick="openModal()" class="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            Nieuwe Registratie
-        </button>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Overuren deze week</div>
+        <div class="hz-card__value" style="color:<?= $overtimeMinutes > 0 ? 'var(--hz-warning)' : 'var(--hz-text)' ?>;"><?= formatDuration($overtimeMinutes) ?></div>
     </div>
-
-    <!-- Table -->
-    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="bg-slate-50 border-b border-slate-200">
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Medewerker</th>
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Project</th>
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Starttijd</th>
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Eindtijd</th>
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Duur</th>
-                        <th class="text-left px-4 py-3 font-medium text-slate-600">Notities</th>
-                        <th class="text-right px-4 py-3 font-medium text-slate-600">Acties</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                    <?php if (empty($entries)): ?>
-                        <tr>
-                            <td colspan="7" class="px-4 py-8 text-center text-slate-400">Geen registraties gevonden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($entries as $entry): ?>
-                            <tr class="hover:bg-slate-50 transition">
-                                <td class="px-4 py-3 font-medium text-slate-800"><?= e($entry['employee_name']) ?></td>
-                                <td class="px-4 py-3">
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
-                                        <?= e($entry['project']) ?>
-                                    </span>
-                                </td>
-                                <td class="px-4 py-3 text-slate-600"><?= formatDateTime($entry['clock_in']) ?></td>
-                                <td class="px-4 py-3 text-slate-600">
-                                    <?php if ($entry['clock_out']): ?>
-                                        <?= formatDateTime($entry['clock_out']) ?>
-                                    <?php else: ?>
-                                        <span class="inline-flex items-center gap-1 text-amber-600 font-medium">
-                                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 8 8">
-                                                <circle cx="4" cy="4" r="4"/>
-                                            </svg>
-                                            Actief
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-4 py-3 font-medium text-slate-800">
-                                    <?php if ($entry['clock_out']): ?>
-                                        <?= formatDuration((int)$entry['duration_minutes']) ?>
-                                    <?php else: ?>
-                                        -
-                                    <?php endif; ?>
-                                </td>
-                                <td class="px-4 py-3 text-slate-500 max-w-[200px] truncate"><?= e($entry['notes']) ?></td>
-                                <td class="px-4 py-3">
-                                    <div class="flex items-center justify-end gap-1">
-                                        <form method="POST" class="inline">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="toggle">
-                                            <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
-                                            <button type="submit" title="<?= $entry['clock_out'] ? 'Heropenen' : 'Stoppen' ?>" class="p-1.5 rounded-lg hover:bg-slate-100 transition <?= $entry['clock_out'] ? 'text-emerald-500' : 'text-red-500' ?>">
-                                                <?php if ($entry['clock_out']): ?>
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                        <polygon points="5 3 19 12 5 21 5 3"/>
-                                                    </svg>
-                                                <?php else: ?>
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                        <rect x="6" y="4" width="4" height="16"/>
-                                                        <rect x="14" y="4" width="4" height="16"/>
-                                                    </svg>
-                                                <?php endif; ?>
-                                            </button>
-                                        </form>
-                                        <button onclick="editEntry(<?= e(json_encode($entry, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT)) ?>)" title="Bewerken" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                                            </svg>
-                                        </button>
-                                        <form method="POST" class="inline" onsubmit="return confirm('Weet je zeker dat je deze registratie wilt verwijderen?')">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="delete">
-                                            <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
-                                            <button type="submit" title="Verwijderen" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-red-500 transition">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                    <polyline points="3 6 5 6 21 6"/>
-                                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                                </svg>
-                                            </button>
-                                        </form>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Opgebouwd verlof</div>
+        <div class="hz-card__value"><?= (float)$focusEmployee['verlof_saldo_uren'] ?>u</div>
     </div>
-
-    <!-- Data refreshes every 30 min (demo reset) -->
-    <p class="mt-4 text-xs text-slate-400 text-center">Demo data wordt elke <?= DEMO_RESET_MINUTES ?> minuten gereset.</p>
 </div>
 
-<!-- Modal -->
-<div id="modal" class="fixed inset-0 z-50 hidden">
-    <div class="absolute inset-0 bg-black/40" onclick="closeModal()"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-white rounded-xl shadow-2xl p-6">
-        <div class="flex items-center justify-between mb-5">
-            <h2 id="modalTitle" class="text-lg font-bold text-slate-800">Nieuwe Registratie</h2>
-            <button onclick="closeModal()" class="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
-            </button>
-        </div>
-        <form method="POST" class="space-y-4">
-            <?= csrfField() ?>
-            <input type="hidden" name="action" id="formAction" value="add">
-            <input type="hidden" name="id" id="formId" value="">
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Medewerker</label>
-                <input type="text" name="employee_name" id="formEmployee" required
-                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
-                    placeholder="Naam medewerker">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Project</label>
-                <select name="project" id="formProject" required
-                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-                    <?php foreach ($projects as $proj): ?>
-                        <option value="<?= e($proj) ?>"><?= e($proj) ?></option>
+<div class="hz-grid hz-grid--3" style="margin-bottom:1.25rem;">
+    <!-- Klok in/uit -->
+    <div class="hz-card">
+        <div class="hz-card__header"><strong>Klok in/uit — <?= e($focusEmployee['name']) ?></strong></div>
+        <?php if ($openEntry): ?>
+            <p style="font-size:.85rem; color:var(--hz-text-muted); margin-bottom:.75rem;">
+                Actief sinds <?= date('H:i', strtotime($openEntry['clock_in'])) ?> op
+                <span class="hz-badge hz-badge--green"><?= e($openEntry['project']) ?></span>
+            </p>
+            <form method="POST">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="server_clock_out">
+                <input type="hidden" name="employee_id" value="<?= $focusEmployeeId ?>">
+                <button type="submit" class="hz-btn hz-btn--danger" style="width:100%;">⏹ Klok uit (nu)</button>
+            </form>
+        <?php else: ?>
+            <form method="POST" class="space-y-3">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="server_clock_in">
+                <input type="hidden" name="employee_id" value="<?= $focusEmployeeId ?>">
+                <div class="hz-field">
+                    <input type="text" name="project" id="quickProject" placeholder=" " required list="recentProjectsList">
+                    <label>Project</label>
+                </div>
+                <datalist id="recentProjectsList">
+                    <?php foreach ($recentProjects as $p): ?><option value="<?= e($p) ?>"><?php endforeach; ?>
+                </datalist>
+                <?php if (!empty($recentProjects)): ?>
+                <div class="hz-flex-wrap" style="margin:-.25rem 0 .5rem;">
+                    <?php foreach ($recentProjects as $p): ?>
+                        <button type="button" class="hz-badge hz-badge--gray" style="cursor:pointer; border:none;" onclick='document.getElementById("quickProject").value=<?= json_encode($p, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>'>↺ <?= e($p) ?></button>
                     <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Starttijd</label>
-                    <input type="datetime-local" name="clock_in" id="formClockIn" required
-                        class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Eindtijd</label>
-                    <input type="datetime-local" name="clock_out" id="formClockOut"
-                        class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+                <?php endif; ?>
+                <div class="hz-field">
+                    <input type="text" name="notes" id="quickNotes" placeholder=" ">
+                    <label>Notities (optioneel)</label>
                 </div>
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Notities</label>
-                <textarea name="notes" id="formNotes" rows="3"
-                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
-                    placeholder="Optioneel..."></textarea>
-            </div>
-            <div class="flex justify-end gap-3 pt-2">
-                <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition">
-                    Annuleren
-                </button>
-                <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition">
-                    Opslaan
-                </button>
-            </div>
-        </form>
+                <button type="submit" class="hz-btn hz-btn--primary" style="width:100%;">▶ Klok in (nu)</button>
+            </form>
+            <p style="font-size:.72rem; color:var(--hz-text-muted); margin-top:.5rem;">Starttijd wordt altijd server-side vastgelegd — dit veld is niet uit de browser aan te passen.</p>
+        <?php endif; ?>
     </div>
+
+    <!-- Spraakgestuurde invoer (demo) -->
+    <div class="hz-card">
+        <div class="hz-card__header"><strong>🎤 Spraakinvoer</strong> <span class="hz-badge hz-badge--gray">demo / browserafhankelijk</span></div>
+        <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
+            Zeg bijv. "twee uur op project App Development". Werkt alleen in Chrome/Edge (Web Speech API).
+        </p>
+        <button type="button" class="hz-btn hz-btn--secondary" id="voiceBtn" onclick="startVoiceDemo()">🎤 Start opname</button>
+        <p id="voiceResult" style="font-size:.85rem; margin-top:.6rem; color:var(--hz-text);"></p>
+    </div>
+
+    <!-- Geofencing simulatie (demo) -->
+    <div class="hz-card">
+        <div class="hz-card__header"><strong>📍 Locatie-check</strong> <span class="hz-badge hz-badge--gray">simulatie</span></div>
+        <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
+            Simuleert geofencing met de browser Geolocation-API t.o.v. een fictief kantooradres. Geen native app/PWA-geofencing.
+        </p>
+        <button type="button" class="hz-btn hz-btn--secondary" onclick="checkGeofence()">📍 Ik ben op kantoor Amsterdam</button>
+        <p id="geoResult" style="font-size:.85rem; margin-top:.6rem; color:var(--hz-text);"></p>
+    </div>
+</div>
+
+<!-- Tijdlijn deze week -->
+<div class="hz-card" style="margin-bottom:1.25rem;">
+    <div class="hz-card__header"><strong>Tijdlijn deze week — <?= e($focusEmployee['name']) ?></strong></div>
+    <?php if (empty($timeline)): ?>
+        <p style="color:var(--hz-text-muted); font-size:.88rem;">Nog geen registraties deze week.</p>
+    <?php else: ?>
+        <ul style="font-size:.88rem; list-style:none; padding:0; margin:0;">
+            <?php foreach ($timeline as $t): ?>
+                <li style="display:flex; justify-content:space-between; padding:.5rem 0; border-bottom:1px solid var(--hz-border);">
+                    <span><strong><?= date('D d-m', strtotime($t['clock_in'])) ?></strong> · <span class="hz-badge hz-badge--gray"><?= e($t['project']) ?></span> <?= e($t['notes']) ?></span>
+                    <span><?= date('H:i', strtotime($t['clock_in'])) ?> – <?= $t['clock_out'] ? date('H:i', strtotime($t['clock_out'])) : '…' ?></span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php endif; ?>
+</div>
+
+<?php else: /* team view */ ?>
+<div class="hz-grid hz-grid--3" style="margin-bottom:1.25rem;">
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Team gewerkt vandaag</div>
+        <div class="hz-card__value"><?= formatDuration($teamMinutesToday) ?></div>
+    </div>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Team gewerkt deze week</div>
+        <div class="hz-card__value"><?= formatDuration($teamMinutesWeek) ?></div>
+    </div>
+    <div class="hz-card hz-card--stat">
+        <div class="hz-card__label">Actieve timers</div>
+        <div class="hz-card__value"><?= $teamActive ?></div>
+    </div>
+</div>
+<p style="color:var(--hz-text-muted); font-size:.9rem; margin-bottom:1rem;">Selecteer een medewerker in de sidebar links om diens persoonlijke dashboard, klok in/uit-knop en uren te bekijken.</p>
+<div class="hz-card">
+    <div class="hz-card__header"><strong>Status per medewerker</strong></div>
+    <table class="hz-table">
+        <thead><tr><th>Naam</th><th>Rol</th><th>Deze week</th><th>Status</th></tr></thead>
+        <tbody>
+        <?php foreach ($statusPerEmployee as $s): ?>
+            <tr>
+                <td><a href="?employee_id=<?= (int)$s['id'] ?>" style="color:var(--hz-primary); text-decoration:none;"><?= e($s['name']) ?></a></td>
+                <td><span class="hz-badge hz-badge--gray"><?= e($s['role']) ?></span></td>
+                <td><?= formatDuration((int)$s['week_minuten']) ?></td>
+                <td><?= $s['actief'] > 0 ? '<span class="hz-badge hz-badge--green">Actief</span>' : '<span class="hz-badge hz-badge--gray">Niet actief</span>' ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php endif; ?>
+
+<!-- AI-schatting projectduur (regel-gebaseerd, geen externe AI-call) -->
+<div class="hz-card" style="margin-top:1.25rem;">
+    <div class="hz-card__header"><strong>💡 Nieuw project? Schat de duur</strong> <span class="hz-badge hz-badge--gray">regel-gebaseerd, geen externe AI-call</span></div>
+    <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
+        Vergelijkt de projectnaam met historische registraties en toont de gemiddelde duur van het meest vergelijkbare project.
+    </p>
+    <div style="display:flex; gap:.5rem; max-width:420px;">
+        <input type="text" id="estimateProject" placeholder="bijv. Website Redesign 2.0" style="flex:1; padding:.55rem .75rem; border:1px solid var(--hz-border); border-radius:var(--hz-radius); background:var(--hz-surface); color:var(--hz-text);">
+        <button type="button" class="hz-btn hz-btn--secondary" onclick="runEstimate()">Schat</button>
+    </div>
+    <p id="estimateResult" style="font-size:.85rem; margin-top:.6rem; color:var(--hz-text);"></p>
 </div>
 
 <script>
-function openModal() {
-    document.getElementById('modal').classList.remove('hidden');
-    document.getElementById('modalTitle').textContent = 'Nieuwe Registratie';
-    document.getElementById('formAction').value = 'add';
-    document.getElementById('formId').value = '';
-    document.getElementById('formEmployee').value = '';
-    document.getElementById('formProject').selectedIndex = 0;
-    document.getElementById('formClockIn').value = '';
-    document.getElementById('formClockOut').value = '';
-    document.getElementById('formNotes').value = '';
+// --- Spraakgestuurde invoer demo (Web Speech API) ---
+function startVoiceDemo() {
+    const resultEl = document.getElementById('voiceResult');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        resultEl.textContent = 'Web Speech API wordt niet ondersteund in deze browser (probeer Chrome/Edge).';
+        return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'nl-NL';
+    recognition.interimResults = false;
+    resultEl.textContent = 'Luisteren...';
+
+    const woordGetallen = { een:1, twee:2, drie:3, vier:4, vijf:5, zes:6, zeven:7, acht:8, negen:9, tien:10, elf:11, twaalf:12 };
+
+    recognition.onresult = function (event) {
+        const transcript = event.results[0][0].transcript.toLowerCase();
+        let uren = null;
+        const cijferMatch = transcript.match(/(\d+([.,]\d+)?)\s*uur/);
+        if (cijferMatch) {
+            uren = parseFloat(cijferMatch[1].replace(',', '.'));
+        } else {
+            for (const woord in woordGetallen) {
+                if (transcript.indexOf(woord + ' uur') > -1) { uren = woordGetallen[woord]; break; }
+            }
+        }
+        const projectMatch = transcript.match(/project\s+([a-z0-9 ]+)/i);
+        const project = projectMatch ? projectMatch[1].trim() : null;
+
+        if (uren !== null && project) {
+            document.getElementById('quickProject').value = project;
+            document.getElementById('quickNotes').value = 'Via spraak: ' + uren + ' uur (herkend, controleer voor opslaan)';
+            resultEl.textContent = 'Herkend: ' + uren + ' uur op project "' + project + '" — ingevuld in het klok-in formulier.';
+        } else {
+            resultEl.textContent = 'Niet herkend ("' + transcript + '"). Probeer: "twee uur op project Consulting".';
+        }
+    };
+    recognition.onerror = function (e) { resultEl.textContent = 'Fout bij spraakherkenning: ' + e.error; };
+    recognition.start();
 }
 
-function editEntry(entry) {
-    document.getElementById('modal').classList.remove('hidden');
-    document.getElementById('modalTitle').textContent = 'Registratie Bewerken';
-    document.getElementById('formAction').value = 'edit';
-    document.getElementById('formId').value = entry.id;
-    document.getElementById('formEmployee').value = entry.employee_name;
-    document.getElementById('formProject').value = entry.project;
-    document.getElementById('formClockIn').value = entry.clock_in ? entry.clock_in.replace(' ', 'T') : '';
-    document.getElementById('formClockOut').value = entry.clock_out ? entry.clock_out.replace(' ', 'T') : '';
-    document.getElementById('formNotes').value = entry.notes || '';
+// --- Geofencing simulatie (demo) ---
+function checkGeofence() {
+    const resultEl = document.getElementById('geoResult');
+    if (!navigator.geolocation) {
+        resultEl.textContent = 'Geolocation wordt niet ondersteund door deze browser.';
+        return;
+    }
+    resultEl.textContent = 'Locatie opvragen...';
+    const kantoor = { lat: 52.3380, lon: 4.8720 }; // fictief demo-kantoor "Amsterdam Zuidas"
+    navigator.geolocation.getCurrentPosition(function (pos) {
+        const R = 6371000;
+        const dLat = (pos.coords.latitude - kantoor.lat) * Math.PI / 180;
+        const dLon = (pos.coords.longitude - kantoor.lon) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(kantoor.lat*Math.PI/180) * Math.cos(pos.coords.latitude*Math.PI/180) * Math.sin(dLon/2)**2;
+        const afstand = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        if (afstand < 250) {
+            resultEl.innerHTML = '✅ Binnen bereik (~' + Math.round(afstand) + ' m van kantoor). Simulatie: klok-in zou automatisch toegestaan worden.';
+        } else {
+            resultEl.innerHTML = '⛔ Buiten bereik (~' + (afstand/1000).toFixed(1) + ' km van kantoor). Simulatie: klok-in zou geblokkeerd worden.';
+        }
+    }, function (err) {
+        resultEl.textContent = 'Locatie niet beschikbaar: ' + err.message;
+    });
 }
 
-function closeModal() {
-    document.getElementById('modal').classList.add('hidden');
+// --- AI-schatting (regel-gebaseerd) ---
+function runEstimate() {
+    const project = document.getElementById('estimateProject').value.trim();
+    const resultEl = document.getElementById('estimateResult');
+    if (!project) { resultEl.textContent = 'Vul een projectnaam in.'; return; }
+    resultEl.textContent = 'Bezig...';
+    fetch('<?= BASE ?>/estimate.php?project=' + encodeURIComponent(project))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.gemiddelde_minuten <= 0) {
+                resultEl.textContent = 'Nog onvoldoende historische data om een schatting te maken.';
+                return;
+            }
+            const uren = (data.gemiddelde_minuten / 60).toFixed(1);
+            let basis = 'algemeen gemiddelde over alle projecten';
+            if (data.basis === 'vergelijkbaar_project') {
+                basis = 'gemiddelde van vergelijkbaar project "' + data.vergelijkbaar_project + '"';
+            }
+            resultEl.textContent = 'Geschatte duur per registratie: ' + uren + ' uur (op basis van ' + basis + ').';
+        })
+        .catch(function () { resultEl.textContent = 'Schatting kon niet worden opgehaald.'; });
 }
 </script>
 
-</body>
-</html>
+<?php layoutEnd(); ?>
