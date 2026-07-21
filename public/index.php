@@ -8,6 +8,7 @@ $db = getDB();
 
 // --- Handle POST actions ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCSRF();
     $action = $_POST['action'] ?? '';
 
     if ($action === 'add' || $action === 'edit') {
@@ -107,8 +108,12 @@ $entries = $stmt->fetchAll();
 $today = date('Y-m-d');
 $weekStart = date('Y-m-d', strtotime('monday this week'));
 
-$statToday = $db->query("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) = '{$today}'")->fetch();
-$statWeek = $db->query("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) >= '{$weekStart}'")->fetch();
+$statToday = $db->prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) = ?");
+$statToday->execute([$today]);
+$statToday = $statToday->fetch();
+$statWeek = $db->prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM tijd_entries WHERE DATE(clock_in) >= ?");
+$statWeek->execute([$weekStart]);
+$statWeek = $statWeek->fetch();
 $statActive = $db->query("SELECT COUNT(*) as total FROM tijd_entries WHERE clock_out IS NULL")->fetch();
 $statProjects = $db->query("SELECT COUNT(DISTINCT project) as total FROM tijd_entries")->fetch();
 
@@ -329,6 +334,7 @@ function formatDateTime(?string $dt): string {
                                 <td class="px-4 py-3">
                                     <div class="flex items-center justify-end gap-1">
                                         <form method="POST" class="inline">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="toggle">
                                             <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
                                             <button type="submit" title="<?= $entry['clock_out'] ? 'Heropenen' : 'Stoppen' ?>" class="p-1.5 rounded-lg hover:bg-slate-100 transition <?= $entry['clock_out'] ? 'text-emerald-500' : 'text-red-500' ?>">
@@ -344,13 +350,14 @@ function formatDateTime(?string $dt): string {
                                                 <?php endif; ?>
                                             </button>
                                         </form>
-                                        <button onclick="editEntry(<?= e(json_encode($entry)) ?>)" title="Bewerken" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition">
+                                        <button onclick="editEntry(<?= e(json_encode($entry, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT)) ?>)" title="Bewerken" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                                             </svg>
                                         </button>
                                         <form method="POST" class="inline" onsubmit="return confirm('Weet je zeker dat je deze registratie wilt verwijderen?')">
+                                            <?= csrfField() ?>
                                             <input type="hidden" name="action" value="delete">
                                             <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
                                             <button type="submit" title="Verwijderen" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-red-500 transition">
@@ -388,6 +395,7 @@ function formatDateTime(?string $dt): string {
             </button>
         </div>
         <form method="POST" class="space-y-4">
+            <?= csrfField() ?>
             <input type="hidden" name="action" id="formAction" value="add">
             <input type="hidden" name="id" id="formId" value="">
             <div>

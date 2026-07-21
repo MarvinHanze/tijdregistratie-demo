@@ -8,7 +8,7 @@ define('DB_PASS', '23ns613Dyo1vgiAOQCt2ABFZzujOsxuyROvqNk4unUoZxWpwN9nIPrMNTt4QF
 define('BASE', '/tijdregistratie');
 define('DEMO_RESET_MINUTES', 30);
 define('ADMIN_EMAIL', 'admin@demo.nl');
-define('ADMIN_PASS', 'demo123');
+define('ADMIN_PASS_HASH', '$2y$10$W8b6Br7j9XjZfX/EPR7u3OkSihmDT3d9aKzVgSyX2MeHr1VIa1auG');
 
 function getDB(): PDO {
     static $pdo = null;
@@ -133,4 +133,29 @@ function requireAuth(): void {
 
 function e(string $value): string {
     return htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+}
+
+function generateCSRFToken(): string {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function csrfField(): string {
+    return '<input type="hidden" name="csrf_token" value="' . e(generateCSRFToken()) . '">';
+}
+
+function verifyCSRF(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $token = $_POST['csrf_token'] ?? '';
+    if (empty($token) || !hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
+        http_response_code(403);
+        exit('Ongeldige aanvraag.');
+    }
 }

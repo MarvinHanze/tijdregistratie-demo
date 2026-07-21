@@ -14,10 +14,11 @@ if (!empty($_SESSION['authenticated'])) {
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCSRF();
     $email = trim($_POST['email'] ?? '');
     $pass = $_POST['password'] ?? '';
 
-    if ($email === ADMIN_EMAIL && $pass === ADMIN_PASS) {
+    if ($email === ADMIN_EMAIL && password_verify($pass, ADMIN_PASS_HASH)) {
         session_regenerate_id(true);
         $_SESSION['authenticated'] = true;
         $_SESSION['user'] = $email;
@@ -54,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php endif; ?>
 
             <form method="POST" class="space-y-5">
+                <?= csrfField() ?>
                 <div>
                     <label for="email" class="block text-sm font-medium text-slate-700 mb-1">E-mailadres</label>
                     <input
