@@ -21,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         session_regenerate_id(true);
         $_SESSION['authenticated'] = true;
         $_SESSION['user'] = $email;
+        seedData();
         header('Location: ' . BASE . '/index.php');
         exit;
     }
