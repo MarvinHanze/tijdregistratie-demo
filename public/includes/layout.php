@@ -43,7 +43,7 @@ function layoutStart(string $title, string $active): array {
     <aside class="hz-sidebar app-sidebar" id="mainSidebar">
         <div style="padding:1rem; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--hz-border);">
             <span class="hz-sidebar__label" style="font-weight:700; color:var(--hz-text); white-space:nowrap;">⏱ Tijdregistratie</span>
-            <button class="hz-sidebar__toggle" data-hz-sidebar-toggle="mainSidebar" title="In-/uitklappen">☰</button>
+            <button class="hz-sidebar__toggle" data-hz-sidebar-toggle="mainSidebar" title="In-/uitklappen"><?= hz_icon('menu') ?></button>
         </div>
         <nav style="padding:.75rem 0; flex:1; overflow-y:auto;">
             <?php foreach ($GLOBALS['__navItems'] as $key => $item): [$href, $label] = $item; ?>
@@ -58,7 +58,7 @@ function layoutStart(string $title, string $active): array {
             </a>
             <?php foreach ($employees as $emp): ?>
                 <a class="hz-sidebar__item <?= $viewedId === (int)$emp['id'] ? 'hz-is-active' : '' ?>" href="?employee_id=<?= (int)$emp['id'] ?>">
-                    <span class="hz-sidebar__label"><?= e($emp['name']) ?><?= $emp['role'] === 'manager' ? ' 👑' : '' ?></span>
+                    <span class="hz-sidebar__label"><?= e($emp['name']) ?><?= $emp['role'] === 'manager' ? ' ' . hz_icon('crown') : '' ?></span>
                 </a>
             <?php endforeach; ?>
         </nav>
@@ -70,7 +70,7 @@ function layoutStart(string $title, string $active): array {
                 <span style="font-weight:600; color:var(--hz-text);"><?= e($title) ?></span>
                 <?php if (!empty($forgotten)): ?>
                     <span class="hz-badge hz-badge--red hz-tooltip">
-                        ⚠ <?= count($forgotten) ?> vergeten uitklok-actie<?= count($forgotten) === 1 ? '' : 's' ?>
+                        <?= hz_icon('alert-triangle') ?> <?= count($forgotten) ?> vergeten uitklok-actie<?= count($forgotten) === 1 ? '' : 's' ?>
                         <span class="hz-tooltip__bubble">Open sinds &gt; 12 uur — controleer op de Urenregistratie-pagina</span>
                     </span>
                 <?php endif; ?>

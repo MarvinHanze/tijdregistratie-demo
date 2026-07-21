@@ -160,7 +160,7 @@ layoutStart('Urenregistratie', 'uren');
         </select>
         <button type="submit" class="hz-btn hz-btn--primary">Zoeken</button>
         <a href="<?= BASE ?>/uren.php" class="hz-btn hz-btn--secondary">Reset</a>
-        <a href="?<?= $exportQuery ?>" class="hz-btn hz-btn--outline">⬇ CSV-export</a>
+        <a href="?<?= $exportQuery ?>" class="hz-btn hz-btn--outline"><?= hz_icon('download') ?> CSV-export</a>
         <button type="button" class="hz-btn hz-btn--primary" style="margin-left:auto;" onclick="openModal()">+ Handmatige correctie</button>
     </form>
     <?php if ($viewedId !== null): $vEmp = getEmployeeById($viewedId); ?>
@@ -209,12 +209,12 @@ layoutStart('Urenregistratie', 'uren');
                                 <?= $entry['clock_out'] ? '▶' : '⏹' ?>
                             </button>
                         </form>
-                        <button type="button" class="hz-icon-btn" title="Bewerken" onclick='editEntry(<?= json_encode($entry, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>)'>✎</button>
+                        <button type="button" class="hz-icon-btn" title="Bewerken" onclick='editEntry(<?= json_encode($entry, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>)'><?= hz_icon('edit') ?></button>
                         <form method="POST" style="display:inline;" data-hz-confirm="Weet je zeker dat je deze registratie wilt verwijderen?">
                             <?= csrfField() ?>
                             <input type="hidden" name="action" value="delete">
                             <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
-                            <button type="submit" class="hz-icon-btn" title="Verwijderen">🗑</button>
+                            <button type="submit" class="hz-icon-btn" title="Verwijderen"><?= hz_icon('trash') ?></button>
                         </form>
                     </div>
                 </td>
@@ -232,7 +232,7 @@ layoutStart('Urenregistratie', 'uren');
     <div class="hz-modal">
         <div class="hz-modal__header">
             <h2 id="modalTitle" style="font-weight:700;">Handmatige correctie</h2>
-            <button type="button" class="hz-icon-btn" onclick="closeModal()">✕</button>
+            <button type="button" class="hz-icon-btn" onclick="closeModal()"><?= hz_icon('x') ?></button>
         </div>
         <p style="font-size:.8rem; color:var(--hz-text-muted); margin-top:-.5rem; margin-bottom:1rem;">
             Voor correcties/nabewerking. Voor de dagelijkse klok in/uit: gebruik de knop op het Dashboard (server-tijd, niet handmatig aan te passen).

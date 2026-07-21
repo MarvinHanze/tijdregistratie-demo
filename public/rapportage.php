@@ -104,7 +104,7 @@ $totaalMinuten = array_sum(array_column($entries, 'duration_minutes'));
             <label>Tot en met</label>
         </div>
         <button type="submit" class="hz-btn hz-btn--primary">Filteren</button>
-        <a href="?vanaf=<?= e($vanaf) ?>&tot=<?= e($tot) ?>&export=csv" class="hz-btn hz-btn--outline">⬇ CSV-export</a>
+        <a href="?vanaf=<?= e($vanaf) ?>&tot=<?= e($tot) ?>&export=csv" class="hz-btn hz-btn--outline"><?= hz_icon('download') ?> CSV-export</a>
     </form>
 </div>
 

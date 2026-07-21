@@ -134,7 +134,7 @@ layoutStart('Instellingen', 'instellingen');
                         <?= csrfField() ?>
                         <input type="hidden" name="naam" value="<?= e($i['naam']) ?>">
                         <input type="hidden" name="action" value="sync_integratie">
-                        <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.35rem .7rem;">🔄 Simuleer sync</button>
+                        <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.35rem .7rem;"><?= hz_icon('refresh-cw') ?> Simuleer sync</button>
                     </form>
                     <?php if ($i['verbonden']): ?>
                     <form method="POST" style="display:inline;">
@@ -159,7 +159,7 @@ layoutStart('Instellingen', 'instellingen');
 <div class="hz-card">
     <div class="hz-card__header"><strong>MFA voor beheerders/managers</strong> <span class="hz-badge hz-badge--gray">echte TOTP (RFC 6238)</span></div>
     <?php if ($account && $account['mfa_enabled']): ?>
-        <p style="color:var(--hz-success); font-weight:600; margin-bottom:.75rem;">✓ MFA is ingeschakeld voor <?= e($account['name']) ?> (<?= e($account['email']) ?>).</p>
+        <p style="color:var(--hz-success); font-weight:600; margin-bottom:.75rem;"><?= hz_icon('check') ?> MFA is ingeschakeld voor <?= e($account['name']) ?> (<?= e($account['email']) ?>).</p>
         <form method="POST">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="mfa_disable">
@@ -172,7 +172,7 @@ layoutStart('Instellingen', 'instellingen');
         <form method="POST" style="margin-bottom:1rem;">
             <?= csrfField() ?>
             <input type="hidden" name="action" value="mfa_generate">
-            <button type="submit" class="hz-btn hz-btn--secondary">🔑 Genereer MFA-sleutel</button>
+            <button type="submit" class="hz-btn hz-btn--secondary"><?= hz_icon('key') ?> Genereer MFA-sleutel</button>
         </form>
         <?php if ($pendingSecret): ?>
             <div style="background:var(--hz-bg); border:1px solid var(--hz-border); border-radius:var(--hz-radius); padding:1rem; margin-bottom:1rem;">

@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/assets/icons.php';
+
 define('DB_HOST', 'y11ovnrne4yk4p9zbhe39tti');
 define('DB_NAME', 'demos');
 define('DB_USER', 'mysql');

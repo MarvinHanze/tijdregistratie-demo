@@ -161,14 +161,14 @@ layoutStart('Verlof', 'verlof');
                                 <input type="hidden" name="action" value="beoordelen">
                                 <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
                                 <input type="hidden" name="besluit" value="goedgekeurd">
-                                <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.3rem .6rem; color:var(--hz-success);">✓ Goedkeuren</button>
+                                <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.3rem .6rem; color:var(--hz-success);"><?= hz_icon('check') ?> Goedkeuren</button>
                             </form>
                             <form method="POST" style="display:inline;">
                                 <?= csrfField() ?>
                                 <input type="hidden" name="action" value="beoordelen">
                                 <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
                                 <input type="hidden" name="besluit" value="afgewezen">
-                                <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.3rem .6rem; color:var(--hz-danger);">✕ Afwijzen</button>
+                                <button type="submit" class="hz-btn hz-btn--secondary" style="padding:.3rem .6rem; color:var(--hz-danger);"><?= hz_icon('x') ?> Afwijzen</button>
                             </form>
                         </div>
                     <?php else: ?>

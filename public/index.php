@@ -106,7 +106,7 @@ $forgotten = $layout['forgotten'];
 
 <?php if (!empty($forgotten)): ?>
 <div class="hz-card" style="border-left:4px solid var(--hz-danger); margin-bottom:1.25rem;">
-    <strong style="color:var(--hz-danger);">⚠ Vergeten uit te klokken</strong>
+    <strong style="color:var(--hz-danger);"><?= hz_icon('alert-triangle') ?> Vergeten uit te klokken</strong>
     <p style="color:var(--hz-text-muted); font-size:.88rem; margin:.35rem 0 .5rem;">
         Deze registraties staan meer dan 12 uur open. Dit is een in-app herinnering (er wordt geen e-mail verstuurd in deze demo).
     </p>
@@ -174,7 +174,7 @@ $forgotten = $layout['forgotten'];
                 <?php if (!empty($recentProjects)): ?>
                 <div class="hz-flex-wrap" style="margin:-.25rem 0 .5rem;">
                     <?php foreach ($recentProjects as $p): ?>
-                        <button type="button" class="hz-badge hz-badge--gray" style="cursor:pointer; border:none;" onclick='document.getElementById("quickProject").value=<?= json_encode($p, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>'>↺ <?= e($p) ?></button>
+                        <button type="button" class="hz-badge hz-badge--gray" style="cursor:pointer; border:none;" onclick='document.getElementById("quickProject").value=<?= json_encode($p, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>'><?= hz_icon('refresh-cw') ?> <?= e($p) ?></button>
                     <?php endforeach; ?>
                 </div>
                 <?php endif; ?>
@@ -190,21 +190,21 @@ $forgotten = $layout['forgotten'];
 
     <!-- Spraakgestuurde invoer (demo) -->
     <div class="hz-card">
-        <div class="hz-card__header"><strong>🎤 Spraakinvoer</strong> <span class="hz-badge hz-badge--gray">demo / browserafhankelijk</span></div>
+        <div class="hz-card__header"><strong><?= hz_icon('mic') ?> Spraakinvoer</strong> <span class="hz-badge hz-badge--gray">demo / browserafhankelijk</span></div>
         <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
             Zeg bijv. "twee uur op project App Development". Werkt alleen in Chrome/Edge (Web Speech API).
         </p>
-        <button type="button" class="hz-btn hz-btn--secondary" id="voiceBtn" onclick="startVoiceDemo()">🎤 Start opname</button>
+        <button type="button" class="hz-btn hz-btn--secondary" id="voiceBtn" onclick="startVoiceDemo()"><?= hz_icon('mic') ?> Start opname</button>
         <p id="voiceResult" style="font-size:.85rem; margin-top:.6rem; color:var(--hz-text);"></p>
     </div>
 
     <!-- Geofencing simulatie (demo) -->
     <div class="hz-card">
-        <div class="hz-card__header"><strong>📍 Locatie-check</strong> <span class="hz-badge hz-badge--gray">simulatie</span></div>
+        <div class="hz-card__header"><strong><?= hz_icon('map-pin') ?> Locatie-check</strong> <span class="hz-badge hz-badge--gray">simulatie</span></div>
         <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
             Simuleert geofencing met de browser Geolocation-API t.o.v. een fictief kantooradres. Geen native app/PWA-geofencing.
         </p>
-        <button type="button" class="hz-btn hz-btn--secondary" onclick="checkGeofence()">📍 Ik ben op kantoor Amsterdam</button>
+        <button type="button" class="hz-btn hz-btn--secondary" onclick="checkGeofence()"><?= hz_icon('map-pin') ?> Ik ben op kantoor Amsterdam</button>
         <p id="geoResult" style="font-size:.85rem; margin-top:.6rem; color:var(--hz-text);"></p>
     </div>
 </div>
@@ -262,7 +262,7 @@ $forgotten = $layout['forgotten'];
 
 <!-- AI-schatting projectduur (regel-gebaseerd, geen externe AI-call) -->
 <div class="hz-card" style="margin-top:1.25rem;">
-    <div class="hz-card__header"><strong>💡 Nieuw project? Schat de duur</strong> <span class="hz-badge hz-badge--gray">regel-gebaseerd, geen externe AI-call</span></div>
+    <div class="hz-card__header"><strong><?= hz_icon('lightbulb') ?> Nieuw project? Schat de duur</strong> <span class="hz-badge hz-badge--gray">regel-gebaseerd, geen externe AI-call</span></div>
     <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.6rem;">
         Vergelijkt de projectnaam met historische registraties en toont de gemiddelde duur van het meest vergelijkbare project.
     </p>
@@ -331,9 +331,9 @@ function checkGeofence() {
         const a = Math.sin(dLat/2)**2 + Math.cos(kantoor.lat*Math.PI/180) * Math.cos(pos.coords.latitude*Math.PI/180) * Math.sin(dLon/2)**2;
         const afstand = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         if (afstand < 250) {
-            resultEl.innerHTML = '✅ Binnen bereik (~' + Math.round(afstand) + ' m van kantoor). Simulatie: klok-in zou automatisch toegestaan worden.';
+            resultEl.innerHTML = '<?= hz_icon('check-circle') ?> Binnen bereik (~' + Math.round(afstand) + ' m van kantoor). Simulatie: klok-in zou automatisch toegestaan worden.';
         } else {
-            resultEl.innerHTML = '⛔ Buiten bereik (~' + (afstand/1000).toFixed(1) + ' km van kantoor). Simulatie: klok-in zou geblokkeerd worden.';
+            resultEl.innerHTML = '<?= hz_icon('x-octagon') ?> Buiten bereik (~' + (afstand/1000).toFixed(1) + ' km van kantoor). Simulatie: klok-in zou geblokkeerd worden.';
         }
     }, function (err) {
         resultEl.textContent = 'Locatie niet beschikbaar: ' + err.message;
