@@ -11,6 +11,54 @@ define('BASE', '/tijdregistratie');
 define('DEMO_RESET_MINUTES', 30);
 define('ADMIN_EMAIL', 'admin@demo.nl');
 define('ADMIN_PASS_HASH', '$2y$10$W8b6Br7j9XjZfX/EPR7u3OkSihmDT3d9aKzVgSyX2MeHr1VIa1auG');
+define('LOGIN_MAX_ATTEMPTS', 5);
+define('LOGIN_LOCKOUT_MINUTES', 15);
+
+// --------------------------------------------------------------------------
+// Foutafhandeling: nooit ruwe PHP-fouten/stacktraces (met bestandspaden of
+// SQL) naar de browser sturen. Fouten gaan naar de server-log; de gebruiker
+// ziet een generieke melding.
+// --------------------------------------------------------------------------
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
+set_exception_handler(function (Throwable $e): void {
+    error_log('Onafgehandelde uitzondering: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo 'Er is een onverwachte fout opgetreden. Probeer het later opnieuw.';
+});
+
+set_error_handler(function (int $severity, string $message, string $file = '', int $line = 0): bool {
+    error_log("PHP-fout [$severity]: $message in $file:$line");
+    // Laat PHP's interne afhandeling ook doorlopen (respecteert error_reporting-niveau),
+    // maar onderdrukt de output omdat display_errors uit staat.
+    return false;
+});
+
+/**
+ * Start de sessie met veilige cookie-instellingen (httponly, samesite, secure
+ * indien via HTTPS). Moet gebruikt worden in plaats van een kale session_start()
+ * zodat deze instellingen overal consistent gelden.
+ */
+function hzSessionStart(): void {
+    if (session_status() !== PHP_SESSION_NONE) {
+        return;
+    }
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => BASE . '/',
+        'domain' => '',
+        'secure' => $isHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
 
 function getDB(): PDO {
     static $pdo = null;
@@ -100,6 +148,19 @@ function setupDatabase(): void {
     $db->exec("CREATE TABLE IF NOT EXISTS tijd_settings (
         id INT PRIMARY KEY DEFAULT 1,
         last_reset DATETIME
+    )");
+
+    // Brute-force-bescherming voor login (wachtwoord) en MFA-codeverificatie,
+    // per combinatie van IP-adres en actie (zodat een lockout op login geen
+    // mfa-pogingen blokkeert en omgekeerd).
+    $db->exec("CREATE TABLE IF NOT EXISTS tijd_login_attempts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        scope VARCHAR(20) NOT NULL,
+        identifier VARCHAR(100) NOT NULL,
+        attempts INT NOT NULL DEFAULT 0,
+        last_attempt_at DATETIME NOT NULL,
+        locked_until DATETIME NULL,
+        UNIQUE KEY uniq_scope_identifier (scope, identifier)
     )");
 
     // Vaste instellingen/stamdata: alleen seeden als leeg (geen periodieke reset zoals de demo-uren-data).
@@ -195,7 +256,15 @@ function seedIntegratiesIfEmpty(): void {
     }
 }
 
-/** Demo-data die elke DEMO_RESET_MINUTES ververst wordt: uren-registraties en verlofaanvragen. */
+/**
+ * Demo-data die elke DEMO_RESET_MINUTES ververst wordt: uren-registraties en verlofaanvragen.
+ * Draait in één transactie (DELETE i.p.v. TRUNCATE, want TRUNCATE veroorzaakt in MySQL een
+ * impliciete commit en zou de atomiciteit doorbreken) zodat een fout halverwege de reseed
+ * (bv. tijdelijk verbindingsprobleem) nooit een half-leeggemaakte tabel achterlaat: bij een
+ * exception wordt alles teruggedraaid en blijft de vorige (nog volledige) demo-data intact.
+ * setupDatabase() laat last_reset in dat geval ongewijzigd, dus de volgende requests proberen
+ * de reseed automatisch opnieuw.
+ */
 function seedData(): void {
     $db = getDB();
     seedEmployeesIfEmpty();
@@ -219,76 +288,84 @@ function seedData(): void {
         'Overleg team',
     ];
 
-    $db->exec("TRUNCATE TABLE tijd_entries");
+    $db->beginTransaction();
+    try {
+        $db->exec("DELETE FROM tijd_entries");
 
-    $now = new DateTime();
-    $stmt = $db->prepare("INSERT INTO tijd_entries (employee_id, employee_name, project, clock_in, clock_out, duration_minutes, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $now = new DateTime();
+        $stmt = $db->prepare("INSERT INTO tijd_entries (employee_id, employee_name, project, clock_in, clock_out, duration_minutes, notes) VALUES (?, ?, ?, ?, ?, ?, ?)");
 
-    for ($i = 0; $i < 25; $i++) {
-        $emp = $employeeRows[array_rand($employeeRows)];
-        $proj = $projects[array_rand($projects)];
-        $note = $notes[array_rand($notes)];
+        for ($i = 0; $i < 25; $i++) {
+            $emp = $employeeRows[array_rand($employeeRows)];
+            $proj = $projects[array_rand($projects)];
+            $note = $notes[array_rand($notes)];
 
-        $daysAgo = random_int(0, 13);
-        $hour = random_int(7, 16);
-        $minute = random_int(0, 3) * 15;
+            $daysAgo = random_int(0, 13);
+            $hour = random_int(7, 16);
+            $minute = random_int(0, 3) * 15;
 
-        $clockIn = clone $now;
-        $clockIn->modify("-{$daysAgo} days");
-        $clockIn->setTime($hour, $minute);
+            $clockIn = clone $now;
+            $clockIn->modify("-{$daysAgo} days");
+            $clockIn->setTime($hour, $minute);
 
-        $isOpen = ($i < 4);
-        $clockOut = null;
-        $duration = 0;
+            $isOpen = ($i < 4);
+            $clockOut = null;
+            $duration = 0;
 
-        if (!$isOpen) {
-            $workMinutes = random_int(120, 540);
-            $clockOut = clone $clockIn;
-            $clockOut->modify("+{$workMinutes} minutes");
-            $duration = $workMinutes;
+            if (!$isOpen) {
+                $workMinutes = random_int(120, 540);
+                $clockOut = clone $clockIn;
+                $clockOut->modify("+{$workMinutes} minutes");
+                $duration = $workMinutes;
+            }
+
+            $stmt->execute([
+                $emp['id'],
+                $emp['name'],
+                $proj,
+                $clockIn->format('Y-m-d H:i:s'),
+                $clockOut ? $clockOut->format('Y-m-d H:i:s') : null,
+                $duration,
+                $note,
+            ]);
         }
 
-        $stmt->execute([
-            $emp['id'],
-            $emp['name'],
-            $proj,
-            $clockIn->format('Y-m-d H:i:s'),
-            $clockOut ? $clockOut->format('Y-m-d H:i:s') : null,
-            $duration,
-            $note,
-        ]);
-    }
+        // Demo-verlofaanvragen, ook periodiek ververst.
+        $db->exec("DELETE FROM tijd_verlof");
+        $verlofTypes = ['vakantie', 'ziek', 'onbetaald', 'bijzonder'];
+        $statuses = ['aangevraagd', 'goedgekeurd', 'afgewezen'];
+        $stmtV = $db->prepare("INSERT INTO tijd_verlof (employee_id, start_date, end_date, type, uren, status, reden, behandeld_door) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        for ($i = 0; $i < 8; $i++) {
+            $emp = $employeeRows[array_rand($employeeRows)];
+            $startOffset = random_int(-10, 20);
+            $start = (clone $now)->modify("{$startOffset} days");
+            $days = random_int(1, 5);
+            $end = (clone $start)->modify('+' . ($days - 1) . ' days');
+            $type = $verlofTypes[array_rand($verlofTypes)];
+            $status = $statuses[array_rand($statuses)];
+            $stmtV->execute([
+                $emp['id'],
+                $start->format('Y-m-d'),
+                $end->format('Y-m-d'),
+                $type,
+                $days * 8,
+                $status,
+                'Demo-aanvraag',
+                $status !== 'aangevraagd' ? 'Beheerder' : null,
+            ]);
+        }
 
-    // Demo-verlofaanvragen, ook periodiek ververst.
-    $db->exec("TRUNCATE TABLE tijd_verlof");
-    $verlofTypes = ['vakantie', 'ziek', 'onbetaald', 'bijzonder'];
-    $statuses = ['aangevraagd', 'goedgekeurd', 'afgewezen'];
-    $stmtV = $db->prepare("INSERT INTO tijd_verlof (employee_id, start_date, end_date, type, uren, status, reden, behandeld_door) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    for ($i = 0; $i < 8; $i++) {
-        $emp = $employeeRows[array_rand($employeeRows)];
-        $startOffset = random_int(-10, 20);
-        $start = (clone $now)->modify("{$startOffset} days");
-        $days = random_int(1, 5);
-        $end = (clone $start)->modify('+' . ($days - 1) . ' days');
-        $type = $verlofTypes[array_rand($verlofTypes)];
-        $status = $statuses[array_rand($statuses)];
-        $stmtV->execute([
-            $emp['id'],
-            $start->format('Y-m-d'),
-            $end->format('Y-m-d'),
-            $type,
-            $days * 8,
-            $status,
-            'Demo-aanvraag',
-            $status !== 'aangevraagd' ? 'Beheerder' : null,
-        ]);
+        $db->commit();
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
     }
 }
 
 function requireAuth(): void {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    hzSessionStart();
     if (empty($_SESSION['authenticated'])) {
         header('Location: ' . BASE . '/login.php');
         exit;
@@ -312,9 +389,7 @@ function e(string $value): string {
 }
 
 function generateCSRFToken(): string {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    hzSessionStart();
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
@@ -326,14 +401,67 @@ function csrfField(): string {
 }
 
 function verifyCSRF(): void {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    hzSessionStart();
     $token = $_POST['csrf_token'] ?? '';
     if (empty($token) || !hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
         http_response_code(403);
         exit('Ongeldige aanvraag.');
     }
+}
+
+// ==========================================================================
+// Brute-force-bescherming (login-wachtwoord & MFA-code)
+// ==========================================================================
+
+/** Client-identificatie voor lockout-doeleinden (IP-adres; demo, geen proxy-chain-parsing). */
+function loginAttemptIdentifier(): string {
+    return substr((string)($_SERVER['REMOTE_ADDR'] ?? 'onbekend'), 0, 100);
+}
+
+/**
+ * Retourneert het aantal resterende seconden dat de gegeven scope/identifier nog
+ * geblokkeerd is, of 0 als er geen (actieve) lockout is.
+ */
+function loginLockoutSecondsRemaining(string $scope): int {
+    $stmt = getDB()->prepare("SELECT locked_until FROM tijd_login_attempts WHERE scope = ? AND identifier = ?");
+    $stmt->execute([$scope, loginAttemptIdentifier()]);
+    $row = $stmt->fetch();
+    if (!$row || !$row['locked_until']) {
+        return 0;
+    }
+    $remaining = (new DateTime($row['locked_until']))->getTimestamp() - time();
+    return max(0, $remaining);
+}
+
+/** Registreert een mislukte poging en zet een lockout zodra het maximum is bereikt. */
+function registerLoginFailure(string $scope): void {
+    $db = getDB();
+    $identifier = loginAttemptIdentifier();
+    $stmt = $db->prepare("SELECT attempts, locked_until FROM tijd_login_attempts WHERE scope = ? AND identifier = ?");
+    $stmt->execute([$scope, $identifier]);
+    $row = $stmt->fetch();
+
+    // Als een eerdere lockout al verstreken is, begint de teller weer bij nul
+    // in plaats van direct opnieuw te blokkeren op de eerstvolgende misser.
+    $lockoutExpired = $row && $row['locked_until'] && (new DateTime($row['locked_until'])) <= new DateTime();
+    $attempts = ($row && !$lockoutExpired) ? (int)$row['attempts'] + 1 : 1;
+    $lockedUntil = null;
+    if ($attempts >= LOGIN_MAX_ATTEMPTS) {
+        $lockedUntil = (new DateTime())->modify('+' . LOGIN_LOCKOUT_MINUTES . ' minutes')->format('Y-m-d H:i:s');
+    }
+
+    $upsert = $db->prepare("
+        INSERT INTO tijd_login_attempts (scope, identifier, attempts, last_attempt_at, locked_until)
+        VALUES (?, ?, ?, NOW(), ?)
+        ON DUPLICATE KEY UPDATE attempts = VALUES(attempts), last_attempt_at = VALUES(last_attempt_at), locked_until = VALUES(locked_until)
+    ");
+    $upsert->execute([$scope, $identifier, $attempts, $lockedUntil]);
+}
+
+/** Reset de teller na een succesvolle login/MFA-verificatie. */
+function clearLoginFailures(string $scope): void {
+    $stmt = getDB()->prepare("DELETE FROM tijd_login_attempts WHERE scope = ? AND identifier = ?");
+    $stmt->execute([$scope, loginAttemptIdentifier()]);
 }
 
 // ==========================================================================
@@ -375,9 +503,7 @@ function currentAccountEmployee(): ?array {
  * één gedeeld demo-account.
  */
 function viewedEmployeeId(): ?int {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
+    hzSessionStart();
     if (isset($_GET['employee_id'])) {
         $val = (int)$_GET['employee_id'];
         if ($val > 0) {

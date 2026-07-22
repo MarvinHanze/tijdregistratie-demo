@@ -4,9 +4,7 @@ require_once __DIR__ . '/config.php';
 requireManager();
 setupDatabase();
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+hzSessionStart();
 
 $db = getDB();
 $account = currentAccountEmployee();

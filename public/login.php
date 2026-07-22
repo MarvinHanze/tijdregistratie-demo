@@ -2,9 +2,8 @@
 declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+hzSessionStart();
+setupDatabase();
 
 if (!empty($_SESSION['authenticated'])) {
     header('Location: ' . BASE . '/index.php');
@@ -12,31 +11,38 @@ if (!empty($_SESSION['authenticated'])) {
 }
 
 $error = '';
+$lockedSeconds = loginLockoutSecondsRemaining('login');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCSRF();
-    $email = trim($_POST['email'] ?? '');
-    $pass = $_POST['password'] ?? '';
 
-    if ($email === ADMIN_EMAIL && password_verify($pass, ADMIN_PASS_HASH)) {
-        session_regenerate_id(true);
-        setupDatabase();
-        $account = getEmployeeByEmail(ADMIN_EMAIL);
+    if ($lockedSeconds > 0) {
+        $error = 'Te veel mislukte inlogpogingen. Probeer het over ' . (int)ceil($lockedSeconds / 60) . ' minuten opnieuw.';
+    } else {
+        $email = trim($_POST['email'] ?? '');
+        $pass = $_POST['password'] ?? '';
 
-        if ($account && !empty($account['mfa_enabled'])) {
-            // MFA vereist: nog niet volledig inloggen, eerst naar de TOTP-stap.
-            $_SESSION['mfa_pending_email'] = $email;
-            header('Location: ' . BASE . '/mfa.php');
+        if ($email === ADMIN_EMAIL && password_verify($pass, ADMIN_PASS_HASH)) {
+            clearLoginFailures('login');
+            session_regenerate_id(true);
+            $account = getEmployeeByEmail(ADMIN_EMAIL);
+
+            if ($account && !empty($account['mfa_enabled'])) {
+                // MFA vereist: nog niet volledig inloggen, eerst naar de TOTP-stap.
+                $_SESSION['mfa_pending_email'] = $email;
+                header('Location: ' . BASE . '/mfa.php');
+                exit;
+            }
+
+            $_SESSION['authenticated'] = true;
+            $_SESSION['user'] = $email;
+            seedData();
+            header('Location: ' . BASE . '/index.php');
             exit;
         }
-
-        $_SESSION['authenticated'] = true;
-        $_SESSION['user'] = $email;
-        seedData();
-        header('Location: ' . BASE . '/index.php');
-        exit;
+        registerLoginFailure('login');
+        $error = 'Ongeldige inloggegevens.';
     }
-    $error = 'Ongeldige inloggegevens.';
 }
 ?>
 <!DOCTYPE html>
@@ -63,9 +69,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
                     <?= e($error) ?>
                 </div>
+            <?php elseif ($lockedSeconds > 0): ?>
+                <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                    Te veel mislukte inlogpogingen. Probeer het over <?= (int)ceil($lockedSeconds / 60) ?> minuten opnieuw.
+                </div>
             <?php endif; ?>
 
-            <form method="POST" class="space-y-5">
+            <form method="POST" class="space-y-5" <?= $lockedSeconds > 0 ? 'aria-disabled="true"' : '' ?>>
                 <?= csrfField() ?>
                 <div>
                     <label for="email" class="block text-sm font-medium text-slate-700 mb-1">E-mailadres</label>
@@ -94,6 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <button
                     type="submit"
                     class="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2.5 rounded-lg transition"
+                    <?= $lockedSeconds > 0 ? 'disabled' : '' ?>
                 >
                     Inloggen
                 </button>

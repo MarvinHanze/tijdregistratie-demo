@@ -2,9 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/config.php';
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+hzSessionStart();
 
 // Deze pagina is alleen bereikbaar na een geldige wachtwoordcontrole in login.php
 // (tweede factor van de login-flow), niet als losstaand toegangspunt.
@@ -21,20 +19,28 @@ if (!empty($_SESSION['authenticated'])) {
 setupDatabase();
 $account = getEmployeeByEmail($pendingEmail);
 $error = '';
+$lockedSeconds = loginLockoutSecondsRemaining('mfa');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCSRF();
-    $code = $_POST['code'] ?? '';
-    if ($account && !empty($account['mfa_secret']) && verifyTotp($account['mfa_secret'], $code)) {
-        unset($_SESSION['mfa_pending_email']);
-        session_regenerate_id(true);
-        $_SESSION['authenticated'] = true;
-        $_SESSION['user'] = $pendingEmail;
-        seedData();
-        header('Location: ' . BASE . '/index.php');
-        exit;
+
+    if ($lockedSeconds > 0) {
+        $error = 'Te veel mislukte pogingen. Probeer het over ' . (int)ceil($lockedSeconds / 60) . ' minuten opnieuw.';
+    } else {
+        $code = $_POST['code'] ?? '';
+        if ($account && !empty($account['mfa_secret']) && verifyTotp($account['mfa_secret'], $code)) {
+            clearLoginFailures('mfa');
+            unset($_SESSION['mfa_pending_email']);
+            session_regenerate_id(true);
+            $_SESSION['authenticated'] = true;
+            $_SESSION['user'] = $pendingEmail;
+            seedData();
+            header('Location: ' . BASE . '/index.php');
+            exit;
+        }
+        registerLoginFailure('mfa');
+        $error = 'Ongeldige of verlopen code.';
     }
-    $error = 'Ongeldige of verlopen code.';
 }
 ?>
 <!DOCTYPE html>
@@ -59,10 +65,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <form method="POST">
                 <?= csrfField() ?>
                 <div class="hz-field">
-                    <input type="text" name="code" inputmode="numeric" maxlength="6" placeholder=" " autofocus required>
+                    <input type="text" name="code" inputmode="numeric" maxlength="6" placeholder=" " autofocus required <?= $lockedSeconds > 0 ? 'disabled' : '' ?>>
                     <label>Code</label>
                 </div>
-                <button type="submit" class="hz-btn hz-btn--primary" style="width:100%;">Verifiëren</button>
+                <button type="submit" class="hz-btn hz-btn--primary" style="width:100%;" <?= $lockedSeconds > 0 ? 'disabled' : '' ?>>Verifiëren</button>
             </form>
             <p style="margin-top:1rem; text-align:center;"><a href="<?= BASE ?>/login.php" style="font-size:.8rem; color:var(--hz-text-muted);">Terug naar inloggen</a></p>
         </div>

@@ -93,12 +93,14 @@ $teamMinutesWeek = (int)$teamStatWeek->fetch()['t'];
 
 $teamActive = (int)$db->query("SELECT COUNT(*) t FROM tijd_entries WHERE clock_out IS NULL")->fetch()['t'];
 
-$statusPerEmployee = $db->query("
+$statusPerEmployeeStmt = $db->prepare("
     SELECT emp.id, emp.name, emp.role,
            (SELECT COUNT(*) FROM tijd_entries e WHERE e.employee_id = emp.id AND e.clock_out IS NULL) AS actief,
-           (SELECT COALESCE(SUM(duration_minutes),0) FROM tijd_entries e WHERE e.employee_id = emp.id AND DATE(e.clock_in) >= '" . $weekStart . "') AS week_minuten
+           (SELECT COALESCE(SUM(duration_minutes),0) FROM tijd_entries e WHERE e.employee_id = emp.id AND DATE(e.clock_in) >= ?) AS week_minuten
     FROM tijd_employees emp ORDER BY name
-")->fetchAll();
+");
+$statusPerEmployeeStmt->execute([$weekStart]);
+$statusPerEmployee = $statusPerEmployeeStmt->fetchAll();
 
 $layout = layoutStart('Dashboard', 'dashboard');
 $forgotten = $layout['forgotten'];
