@@ -54,6 +54,12 @@ if (!function_exists('hz_icon')) {
             'edit' => '<path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
             'trash' => '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
             'crown' => '<path d="M2 8l4 4 6-8 6 8 4-4-2 11H4z"/><line x1="4" y1="21" x2="20" y2="21"/>',
+            'clock' => '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+            'play' => '<polygon points="5 3 19 12 5 21 5 3"/>',
+            'stop' => '<rect x="5" y="5" width="14" height="14" rx="1.5"/>',
+            'dot' => '<circle cx="12" cy="12" r="5" fill="currentColor" stroke="none"/>',
+            'chevron-up' => '<polyline points="18 15 12 9 6 15"/>',
+            'chevron-down' => '<polyline points="6 9 12 15 18 9"/>',
         ];
         $path = $paths[$key] ?? $paths['box'];
         return '<svg class="' . htmlspecialchars($class) . '" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' . $path . '</svg>';

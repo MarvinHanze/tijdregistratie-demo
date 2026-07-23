@@ -194,7 +194,7 @@ layoutStart('Urenregistratie', 'uren');
                     <?php if ($entry['clock_out']): ?>
                         <?= formatDateTime($entry['clock_out']) ?>
                     <?php else: ?>
-                        <span class="hz-badge hz-badge--orange">● Actief</span>
+                        <span class="hz-badge hz-badge--orange"><?= hz_icon('dot') ?> Actief</span>
                     <?php endif; ?>
                 </td>
                 <td style="font-weight:600;"><?= $entry['clock_out'] ? formatDuration((int)$entry['duration_minutes']) : '-' ?></td>
@@ -206,7 +206,7 @@ layoutStart('Urenregistratie', 'uren');
                             <input type="hidden" name="action" value="toggle">
                             <input type="hidden" name="id" value="<?= (int)$entry['id'] ?>">
                             <button type="submit" class="hz-icon-btn" title="<?= $entry['clock_out'] ? 'Heropenen' : 'Stoppen' ?>">
-                                <?= $entry['clock_out'] ? '▶' : '⏹' ?>
+                                <?= $entry['clock_out'] ? hz_icon('play') : hz_icon('stop') ?>
                             </button>
                         </form>
                         <button type="button" class="hz-icon-btn" title="Bewerken" onclick='editEntry(<?= json_encode($entry, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>)'><?= hz_icon('edit') ?></button>

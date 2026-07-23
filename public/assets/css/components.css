@@ -137,8 +137,8 @@
 .hz-table { width:100%; border-collapse:collapse; background:var(--hz-surface); border:1px solid var(--hz-border); border-radius:var(--hz-radius); overflow:hidden; }
 .hz-table th, .hz-table td { padding:.65rem .9rem; border-bottom:1px solid var(--hz-border); text-align:left; font-size:.88rem; }
 .hz-table th { background:var(--hz-bg); font-weight:600; color:var(--hz-text-muted); cursor:pointer; user-select:none; }
-.hz-table th.hz-sort-asc::after { content:" ▲"; font-size:.7em; }
-.hz-table th.hz-sort-desc::after { content:" ▼"; font-size:.7em; }
+.hz-table th.hz-sort-asc::after { content:""; display:inline-block; margin-left:.35em; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:5px solid currentColor; vertical-align:middle; }
+.hz-table th.hz-sort-desc::after { content:""; display:inline-block; margin-left:.35em; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid currentColor; vertical-align:middle; }
 .hz-table tr:hover td { background:var(--hz-bg); }
 .hz-table__detail-row td { background:var(--hz-bg); padding:1rem; }
 .hz-table__expand-btn { border:none; background:none; cursor:pointer; color:var(--hz-text-muted); }
@@ -183,6 +183,9 @@
 .hz-tooltip { position:relative; display:inline-flex; }
 .hz-tooltip__bubble { position:absolute; bottom:125%; left:50%; transform:translateX(-50%); background:var(--hz-text); color:var(--hz-bg); padding:.35rem .6rem; border-radius:6px; font-size:.75rem; white-space:nowrap; opacity:0; pointer-events:none; transition:opacity .15s; z-index:110; }
 .hz-tooltip:hover .hz-tooltip__bubble, .hz-tooltip:focus-within .hz-tooltip__bubble { opacity:1; }
+/* Modifier voor tooltips die bovenaan de pagina staan (bv. in een sticky topbar) — daar is geen
+   ruimte boven het element, dus de bubble klapt hier naar beneden open i.p.v. naar boven. */
+.hz-tooltip--bottom .hz-tooltip__bubble { bottom:auto; top:125%; }
 
 /* ==================== 5. Knoppen & Acties ==================== */
 

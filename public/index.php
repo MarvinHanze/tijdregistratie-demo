@@ -159,7 +159,7 @@ $forgotten = $layout['forgotten'];
                 <?= csrfField() ?>
                 <input type="hidden" name="action" value="server_clock_out">
                 <input type="hidden" name="employee_id" value="<?= $focusEmployeeId ?>">
-                <button type="submit" class="hz-btn hz-btn--danger" style="width:100%;">⏹ Klok uit (nu)</button>
+                <button type="submit" class="hz-btn hz-btn--danger" style="width:100%;"><?= hz_icon('stop') ?> Klok uit (nu)</button>
             </form>
         <?php else: ?>
             <form method="POST" class="space-y-3">
@@ -184,7 +184,7 @@ $forgotten = $layout['forgotten'];
                     <input type="text" name="notes" id="quickNotes" placeholder=" ">
                     <label>Notities (optioneel)</label>
                 </div>
-                <button type="submit" class="hz-btn hz-btn--primary" style="width:100%;">▶ Klok in (nu)</button>
+                <button type="submit" class="hz-btn hz-btn--primary" style="width:100%;"><?= hz_icon('play') ?> Klok in (nu)</button>
             </form>
             <p style="font-size:.72rem; color:var(--hz-text-muted); margin-top:.5rem;">Starttijd wordt altijd server-side vastgelegd — dit veld is niet uit de browser aan te passen.</p>
         <?php endif; ?>
@@ -277,17 +277,34 @@ $forgotten = $layout['forgotten'];
 
 <script>
 // --- Spraakgestuurde invoer demo (Web Speech API) ---
+const VOICE_ERROR_MESSAGES = {
+    'network': 'Spraakherkenning kon de herkenningsdienst van de browser niet bereiken (netwerk- of browserbeperking, buiten deze app om — vaak tijdelijk). Probeer het opnieuw, of vul de velden hierboven handmatig in.',
+    'not-allowed': 'Microfoon-toegang is geweigerd. Sta microfoongebruik toe voor deze site en probeer opnieuw.',
+    'service-not-allowed': 'De browser staat spraakherkenning op deze pagina niet toe. Vul de velden hierboven handmatig in.',
+    'no-speech': 'Geen spraak gedetecteerd. Probeer het opnieuw en spreek duidelijk in de microfoon.',
+    'audio-capture': 'Geen microfoon gevonden. Sluit een microfoon aan of vul de velden hierboven handmatig in.',
+    'aborted': 'Opname geannuleerd.'
+};
+
 function startVoiceDemo() {
     const resultEl = document.getElementById('voiceResult');
+    const btn = document.getElementById('voiceBtn');
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
         resultEl.textContent = 'Web Speech API wordt niet ondersteund in deze browser (probeer Chrome/Edge).';
         return;
     }
+    if (btn.disabled) return; // voorkom dubbel starten tijdens het luisteren
+    const oldRetry = document.getElementById('voiceRetryBtn');
+    if (oldRetry) oldRetry.remove();
+
     const recognition = new SpeechRecognition();
     recognition.lang = 'nl-NL';
     recognition.interimResults = false;
     resultEl.textContent = 'Luisteren...';
+    btn.disabled = true;
+    btn.dataset.originalLabel = btn.innerHTML;
+    btn.innerHTML = btn.innerHTML.replace('Start opname', 'Luisteren...');
 
     const woordGetallen = { een:1, twee:2, drie:3, vier:4, vijf:5, zes:6, zeven:7, acht:8, negen:9, tien:10, elf:11, twaalf:12 };
 
@@ -313,7 +330,24 @@ function startVoiceDemo() {
             resultEl.textContent = 'Niet herkend ("' + transcript + '"). Probeer: "twee uur op project Consulting".';
         }
     };
-    recognition.onerror = function (e) { resultEl.textContent = 'Fout bij spraakherkenning: ' + e.error; };
+    recognition.onerror = function (e) {
+        const message = VOICE_ERROR_MESSAGES[e.error] || ('Fout bij spraakherkenning: ' + e.error);
+        resultEl.textContent = message;
+        if (e.error === 'network') {
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.id = 'voiceRetryBtn';
+            retry.className = 'hz-btn hz-btn--secondary';
+            retry.style.marginTop = '.5rem';
+            retry.textContent = 'Probeer opnieuw';
+            retry.onclick = function () { retry.remove(); startVoiceDemo(); };
+            resultEl.after(retry);
+        }
+    };
+    recognition.onend = function () {
+        btn.disabled = false;
+        if (btn.dataset.originalLabel) { btn.innerHTML = btn.dataset.originalLabel; }
+    };
     recognition.start();
 }
 
