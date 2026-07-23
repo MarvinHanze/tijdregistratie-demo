@@ -11,7 +11,7 @@ $vanaf = $_GET['vanaf'] ?? date('Y-m-01');
 $tot = $_GET['tot'] ?? date('Y-m-d');
 
 $stmt = $db->prepare("
-    SELECT e.*, emp.name AS emp_name FROM tijd_entries e
+    SELECT e.*, emp.name AS emp_name, emp.contract_uren_per_week AS emp_contract_uren FROM tijd_entries e
     LEFT JOIN tijd_employees emp ON emp.id = e.employee_id
     WHERE DATE(e.clock_in) BETWEEN ? AND ?
     ORDER BY e.clock_in ASC
@@ -26,7 +26,8 @@ foreach ($entries as $entry) {
     $name = $entry['emp_name'] ?? $entry['employee_name'];
     $empId = $entry['employee_id'] ?? 0;
     if (!isset($perEmployee[$empId])) {
-        $perEmployee[$empId] = ['naam' => $name, 'minuten' => 0, 'ort_avond' => 0, 'ort_weekend' => 0, 'registraties' => 0];
+        $contractUren = $entry['emp_contract_uren'] !== null ? (float)$entry['emp_contract_uren'] : null;
+        $perEmployee[$empId] = ['naam' => $name, 'minuten' => 0, 'ort_avond' => 0, 'ort_weekend' => 0, 'registraties' => 0, 'contract_uren' => $contractUren];
     }
     $perEmployee[$empId]['minuten'] += (int)$entry['duration_minutes'];
     $perEmployee[$empId]['registraties']++;
@@ -45,7 +46,7 @@ foreach ($entries as $entry) {
 foreach ($perEmployee as $empId => &$row) {
     $overtime = 0;
     foreach ($perEmployeeWeekMinutes[$empId] ?? [] as $weekMinutes) {
-        $overtime += calculateOvertimeMinutes($weekMinutes, $regels);
+        $overtime += calculateOvertimeMinutes($weekMinutes, $regels, $row['contract_uren']);
     }
     $row['overuren_minuten'] = $overtime;
 }

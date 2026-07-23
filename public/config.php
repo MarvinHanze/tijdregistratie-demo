@@ -539,9 +539,14 @@ function calculateBreakMinutes(int $workedMinutes, array $regels): int {
     return $workedMinutes > $drempel ? (int)round($duur) : 0;
 }
 
-/** Overuren (in minuten) boven de ingestelde normuren per week. */
-function calculateOvertimeMinutes(int $weekTotalMinutes, array $regels): int {
-    $normUren = $regels['normuren_per_week'] ?? 40.0;
+/**
+ * Overuren (in minuten) boven de normuren per week. Gebruikt bij voorkeur het
+ * individuele contract van de medewerker (tijd_employees.contract_uren_per_week);
+ * valt terug op de algemene CAO-instelling als er geen contract-override is
+ * meegegeven (bv. wanneer de medewerker onbekend is).
+ */
+function calculateOvertimeMinutes(int $weekTotalMinutes, array $regels, ?float $contractUrenPerWeek = null): int {
+    $normUren = $contractUrenPerWeek ?? ($regels['normuren_per_week'] ?? 40.0);
     $normMinuten = (int)round($normUren * 60);
     return max(0, $weekTotalMinutes - $normMinuten);
 }

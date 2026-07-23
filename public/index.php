@@ -63,8 +63,8 @@ if ($focusEmployee) {
     $stmtWeek->execute([$focusEmployeeId, $weekStart]);
     $minutesWeek = (int)$stmtWeek->fetch()['t'];
 
-    $overtimeMinutes = calculateOvertimeMinutes($minutesWeek, $regels);
-    $normUren = $regels['normuren_per_week'] ?? 40.0;
+    $normUren = isset($focusEmployee['contract_uren_per_week']) ? (float)$focusEmployee['contract_uren_per_week'] : ($regels['normuren_per_week'] ?? 40.0);
+    $overtimeMinutes = calculateOvertimeMinutes($minutesWeek, $regels, $normUren);
 
     $stmtOpen = $db->prepare("SELECT * FROM tijd_entries WHERE employee_id = ? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1");
     $stmtOpen->execute([$focusEmployeeId]);

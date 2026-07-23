@@ -22,6 +22,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $flash = 'CAO-regels bijgewerkt.';
     }
 
+    if ($action === 'update_contracten') {
+        $upd = $db->prepare("UPDATE tijd_employees SET contract_uren_per_week = ? WHERE id = ?");
+        foreach ($_POST['contract'] ?? [] as $empId => $uren) {
+            $empId = (int)$empId;
+            $uren = (float)str_replace(',', '.', (string)$uren);
+            if ($empId > 0 && $uren > 0 && $uren <= 80) {
+                $upd->execute([$uren, $empId]);
+            }
+        }
+        $flash = 'Contracturen per medewerker bijgewerkt.';
+    }
+
     if ($action === 'sync_integratie') {
         $naam = $_POST['naam'] ?? '';
         $stmt = $db->prepare("UPDATE tijd_integraties SET verbonden = 1, laatste_sync = NOW(), status_bericht = ? WHERE naam = ?");
@@ -65,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $caoRegels = $db->query("SELECT * FROM tijd_cao_regels ORDER BY id")->fetchAll();
+$medewerkers = $db->query("SELECT id, name, role, contract_uren_per_week, verlof_saldo_uren FROM tijd_employees ORDER BY (role = 'manager') DESC, name ASC")->fetchAll();
 $integraties = $db->query("SELECT * FROM tijd_integraties ORDER BY categorie, label")->fetchAll();
 $pendingSecret = $_SESSION['pending_mfa_secret'] ?? null;
 
@@ -95,6 +108,35 @@ layoutStart('Instellingen', 'instellingen');
                     <td><input type="text" name="regel[<?= e($r['regel_key']) ?>]" value="<?= e((string)$r['waarde']) ?>" style="width:90px; padding:.35rem .5rem; border:1px solid var(--hz-border); border-radius:var(--hz-radius); background:var(--hz-surface); color:var(--hz-text);"></td>
                     <td style="color:var(--hz-text-muted);"><?= e($r['eenheid']) ?></td>
                     <td style="color:var(--hz-text-muted); font-size:.82rem;"><?= e($r['omschrijving']) ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+        <button type="submit" class="hz-btn hz-btn--primary" style="margin-top:1rem;">Opslaan</button>
+    </form>
+</div>
+
+<!-- Contracturen per medewerker -->
+<div class="hz-card" style="margin-bottom:1.25rem;">
+    <div class="hz-card__header"><strong>Contracturen per medewerker</strong></div>
+    <p style="font-size:.82rem; color:var(--hz-text-muted); margin-bottom:.75rem;">
+        Elke medewerker kan een eigen contracturen-norm hebben in plaats van de algemene "Normuren per week" hierboven.
+        De overuren-berekening op Dashboard en Rapportages gebruikt per medewerker dit individuele contract als het is ingevuld.
+    </p>
+    <form method="POST">
+        <?= csrfField() ?>
+        <input type="hidden" name="action" value="update_contracten">
+        <div style="overflow-x:auto;">
+        <table class="hz-table">
+            <thead><tr><th>Medewerker</th><th>Rol</th><th>Contracturen/week</th><th>Verlofsaldo (uren)</th></tr></thead>
+            <tbody>
+            <?php foreach ($medewerkers as $m): ?>
+                <tr>
+                    <td style="font-weight:600;"><?= e($m['name']) ?></td>
+                    <td><span class="hz-badge hz-badge--gray"><?= e(ucfirst($m['role'])) ?></span></td>
+                    <td><input type="number" name="contract[<?= (int)$m['id'] ?>]" value="<?= e((string)$m['contract_uren_per_week']) ?>" min="1" max="80" step="0.5" style="width:90px; padding:.35rem .5rem; border:1px solid var(--hz-border); border-radius:var(--hz-radius); background:var(--hz-surface); color:var(--hz-text);"></td>
+                    <td style="color:var(--hz-text-muted);"><?= (float)$m['verlof_saldo_uren'] ?>u</td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
